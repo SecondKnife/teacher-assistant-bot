@@ -1,0 +1,29 @@
+# Telegram Bot
+python-telegram-bot[job-queue]==21.6
+
+# Google Drive
+google-api-python-client==2.149.0
+google-auth==2.35.0
+google-auth-oauthlib==1.2.1
+
+# Document Parsing
+openpyxl==3.1.5
+python-docx==1.1.2
+pandas==2.2.3
+
+# Database
+SQLAlchemy==2.0.35
+aiosqlite==0.20.0
+greenlet==3.2.5
+
+# Scheduler
+APScheduler==3.10.4
+
+# Configuration
+python-dotenv==1.0.1
+
+# Logging
+rich==13.9.2
+
+# Production
+uvloop==0.21.0; sys_platform != "win32"

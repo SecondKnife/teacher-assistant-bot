@@ -1,0 +1,35 @@
+# flyctl launch added from .gitignore
+# Byte-compiled
+**/__pycache__
+**/*.py[cod]
+**/*$py.class
+
+# Environment
+**/.env
+**/.venv
+**/venv
+**/env
+
+# Data (persistent)
+**/data
+**/*.db
+
+# Google credentials
+**/credentials
+**/*.json
+!**/docker-compose.yml
+
+# IDE
+**/.idea
+**/.vscode
+**/*.swp
+**/*.swo
+
+# OS
+**/.DS_Store
+**/Thumbs.db
+
+# Mock data output
+**/mock_data/*.xlsx
+**/mock_data/*.docx
+fly.toml

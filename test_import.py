@@ -70,19 +70,19 @@ async def main():
     scheduler._session_factory = sf
 
     # Import Excel
-    result1 = await scheduler.trigger_import_local(str(excel_path))
+    result1 = await scheduler.trigger_import_local(user_id=1, file_path=str(excel_path))
     print(f"  Excel import: {result1['records_added']} records added")
 
     # Import Word
-    result2 = await scheduler.trigger_import_local(str(word_path))
+    result2 = await scheduler.trigger_import_local(user_id=1, file_path=str(word_path))
     print(f"  Word import: {result2['records_added']} records added")
 
     # 4. Test statistics
     print("\n📊 Step 4: Checking statistics...")
     async with sf() as session:
-        stats = await get_task_statistics(session)
-        due_soon = await get_tasks_due_soon(session, days_ahead=7)
-        overdue = await get_overdue_tasks(session)
+        stats = await get_task_statistics(session, user_id=1)
+        due_soon = await get_tasks_due_soon(session, user_id=1, days_ahead=7)
+        overdue = await get_overdue_tasks(session, user_id=1)
 
     print(f"  Total tasks: {stats['total']}")
     print(f"  Pending: {stats['pending']}")

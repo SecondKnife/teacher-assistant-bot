@@ -2,15 +2,13 @@
 Main entry point — initializes and runs the Telegram bot.
 """
 
-import asyncio
 import logging
 import sys
-from pathlib import Path
 
 from telegram.ext import Application, CommandHandler
 
 from config import config
-from database.models import init_db, get_async_engine, get_async_session_factory
+from database.models import init_db, get_async_session_factory
 from bot import handlers
 from services.scheduler import SchedulerService
 
@@ -83,6 +81,9 @@ def main():
 
     # ── Register Command Handlers ─────────────────────────
     app.add_handler(CommandHandler("start", handlers.start_command))
+    app.add_handler(CommandHandler("set_drive", handlers.set_drive_command))
+    app.add_handler(CommandHandler("pending", handlers.pending_command))
+    app.add_handler(CommandHandler("approve", handlers.approve_command))
     app.add_handler(CommandHandler("help", handlers.help_command))
     app.add_handler(CommandHandler("today", handlers.today_command))
     app.add_handler(CommandHandler("week", handlers.week_command))

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import io
 import logging
-import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -48,8 +47,7 @@ class GoogleDriveService:
 
     SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
-    def __init__(self, service_account_file: str, folder_id: str):
-        self.folder_id = folder_id
+    def __init__(self, service_account_file: str):
         self._service = None
         self._credentials = None
         self._service_account_file = service_account_file
@@ -65,7 +63,7 @@ class GoogleDriveService:
             logger.info("Google Drive service initialized")
         return self._service
 
-    def list_files(self) -> list[dict]:
+    def list_files(self, folder_id: str) -> list[dict]:
         """
         List all supported files in the monitored folder.
 
@@ -77,7 +75,7 @@ class GoogleDriveService:
         mime_queries = " or ".join(
             f"mimeType='{mime}'" for mime in SUPPORTED_TYPES.keys()
         )
-        query = f"'{self.folder_id}' in parents and ({mime_queries}) and trashed=false"
+        query = f"'{folder_id}' in parents and ({mime_queries}) and trashed=false"
 
         try:
             results = (
@@ -172,13 +170,13 @@ class GoogleDriveService:
             logger.error(f"Error getting modified time for {file_id}: {e}")
             return None
 
-    def sync_files(self, download_dir: str | Path) -> list[dict]:
+    def sync_files(self, folder_id: str, download_dir: str | Path) -> list[dict]:
         """
         Sync all supported files from the monitored folder.
 
         Returns list of dicts: {file_id, file_name, local_path, modified_time}
         """
-        files = self.list_files()
+        files = self.list_files(folder_id)
         synced = []
 
         for file_info in files:

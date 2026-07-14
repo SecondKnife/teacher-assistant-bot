@@ -18,6 +18,9 @@ class TelegramConfig:
     bot_token: str = field(
         default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", "")
     )
+    admin_telegram_id: str = field(
+        default_factory=lambda: os.getenv("ADMIN_TELEGRAM_ID", "")
+    )
 
 
 @dataclass(frozen=True)
@@ -27,9 +30,6 @@ class GoogleDriveConfig:
             "GOOGLE_SERVICE_ACCOUNT_FILE",
             str(BASE_DIR / "credentials" / "service_account.json"),
         )
-    )
-    folder_id: str = field(
-        default_factory=lambda: os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
     )
 
 

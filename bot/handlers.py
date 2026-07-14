@@ -1,26 +1,32 @@
 """
 Telegram bot command handlers — all user-facing commands.
+Multi-tenant enabled with Admin approval.
 """
 
 import logging
 from datetime import datetime
+from functools import wraps
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from config import config
 from database.crud import (
-    get_active_users,
+    approve_user,
     get_class_statistics,
     get_or_create_user_setting,
     get_overdue_tasks,
+    get_pending_users,
     get_task_by_id,
     get_task_statistics,
     get_tasks_by_class,
     get_tasks_due_soon,
+    get_tasks_for_student,
     get_today_tasks,
+    get_user_by_chat_id,
     mark_task_done,
     search_students,
-    get_tasks_for_student,
+    set_user_drive_folder,
     update_overdue_tasks,
 )
 from database.models import TaskStatus, get_async_session_factory
@@ -39,7 +45,47 @@ def set_dependencies(sf, ss):
     scheduler_service = ss
 
 
-# ─── /start ──────────────────────────────────────────────
+def require_approval(func):
+    """Decorator to require admin approval for a command."""
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        chat_id = str(update.effective_chat.id)
+        async with session_factory() as session:
+            user = await get_user_by_chat_id(session, chat_id)
+        
+        if not user or not user.is_approved:
+            await update.message.reply_text(
+                "❌ Bạn chưa được cấp quyền sử dụng bot này.\n"
+                "Vui lòng chờ Admin phê duyệt hoặc liên hệ Admin."
+            )
+            return
+        
+        # Inject user_id into context for easy access in handlers
+        context.user_data['user_id'] = user.id
+        context.user_data['is_admin'] = user.is_admin
+        context.user_data['gdrive_folder_id'] = user.gdrive_folder_id
+        
+        return await func(update, context, *args, **kwargs)
+    return wrapper
+
+
+def require_admin(func):
+    """Decorator to require admin rights."""
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        chat_id = str(update.effective_chat.id)
+        async with session_factory() as session:
+            user = await get_user_by_chat_id(session, chat_id)
+        
+        if not user or not user.is_admin:
+            await update.message.reply_text("❌ Lệnh này chỉ dành cho Admin.")
+            return
+            
+        return await func(update, context, *args, **kwargs)
+    return wrapper
+
+
+# ─── Auth / Setup Commands ───────────────────────────────
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -48,8 +94,22 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or update.effective_user.first_name
 
     async with session_factory() as session:
-        await get_or_create_user_setting(session, chat_id, username)
+        user = await get_or_create_user_setting(session, chat_id, username)
+        
+        # Auto-approve if they are the admin defined in config
+        if str(config.telegram.admin_telegram_id) == chat_id and not user.is_admin:
+            user.is_admin = 1
+            user.is_approved = 1
+            
         await session.commit()
+
+    if not user.is_approved:
+        await update.message.reply_text(
+            "👋 <b>Chào mừng đến với Teacher Assistant Bot!</b>\n\n"
+            "Tài khoản của bạn đã được ghi nhận. Vui lòng chờ Admin phê duyệt để sử dụng các tính năng.",
+            parse_mode="HTML"
+        )
+        return
 
     welcome = (
         "🎓 <b>Chào mừng đến với Teacher Assistant Bot!</b>\n\n"
@@ -62,22 +122,83 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /hocsinh &lt;tên&gt; — Tra cứu học sinh\n"
         "  /lop &lt;tên lớp&gt; — Thống kê theo lớp\n"
         "  /hoanthanh &lt;id&gt; — Đánh dấu hoàn thành\n"
+        "  /set_drive &lt;id&gt; — Cấu hình thư mục Google Drive\n"
         "  /sync — Đồng bộ từ Google Drive\n"
-        "  /baocao — Báo cáo chi tiết\n"
         "  /help — Xem hướng dẫn\n\n"
-        f"✅ Đã đăng ký nhận nhắc nhở cho <b>{username}</b>!"
+        f"✅ Xin chào <b>{username}</b>! Bạn đã có toàn quyền truy cập."
     )
     await update.message.reply_text(welcome, parse_mode="HTML")
 
 
-# ─── /help ───────────────────────────────────────────────
+@require_approval
+async def set_drive_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set Google Drive folder ID for the user."""
+    if not context.args:
+        await update.message.reply_text(
+            "ℹ️ Cách dùng: /set_drive <Folder_ID>\n"
+            "Bạn có thể lấy Folder ID từ đường link thư mục Google Drive của bạn."
+        )
+        return
+        
+    folder_id = context.args[0]
+    chat_id = str(update.effective_chat.id)
+    
+    async with session_factory() as session:
+        await set_user_drive_folder(session, chat_id, folder_id)
+        await session.commit()
+        
+    await update.message.reply_text(f"✅ Đã cấu hình Google Drive Folder ID: <code>{folder_id}</code>\nDùng lệnh /sync để đồng bộ dữ liệu ngay lập tức.", parse_mode="HTML")
 
 
+# ─── Admin Commands ──────────────────────────────────────
+
+
+@require_admin
+async def pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List users waiting for approval."""
+    async with session_factory() as session:
+        users = await get_pending_users(session)
+        
+    if not users:
+        await update.message.reply_text("✅ Không có ai đang chờ phê duyệt.")
+        return
+        
+    lines = ["📝 <b>Danh sách người dùng đang chờ:</b>\n"]
+    for u in users:
+        lines.append(f"• Tên: {u.username} | Chat ID: <code>{u.chat_id}</code>")
+        
+    lines.append("\n👉 Dùng lệnh: /approve &lt;chat_id&gt; để duyệt.")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+@require_admin
+async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Approve a user."""
+    if not context.args:
+        await update.message.reply_text("ℹ️ Cách dùng: /approve <chat_id>")
+        return
+        
+    target_id = context.args[0]
+    async with session_factory() as session:
+        user = await approve_user(session, target_id, is_approved=1)
+        await session.commit()
+        
+    if user:
+        await update.message.reply_text(f"✅ Đã phê duyệt cho Chat ID: {target_id}")
+    else:
+        await update.message.reply_text(f"❌ Không tìm thấy user với Chat ID: {target_id}")
+
+
+# ─── Regular Commands ────────────────────────────────────
+
+
+@require_approval
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show help information."""
     help_text = (
         "📖 <b>Hướng dẫn sử dụng Teacher Assistant Bot</b>\n\n"
         "🔄 <b>Đồng bộ dữ liệu:</b>\n"
+        "  /set_drive &lt;id&gt; — Khai báo thư mục Drive của bạn\n"
         "  /sync — Đồng bộ ngay từ Google Drive\n\n"
         "📋 <b>Xem công việc:</b>\n"
         "  /today — Việc cần làm hôm nay\n"
@@ -93,20 +214,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /hoanthanh 5 — Hoàn thành việc #5\n\n"
         "⏰ <b>Nhắc nhở tự động:</b>\n"
         "  Bot sẽ gửi nhắc nhở mỗi sáng lúc 7:00\n"
-        "  và cảnh báo trước deadline 3 ngày."
+        "  và tổng kết buổi tối lúc 21:00."
     )
     await update.message.reply_text(help_text, parse_mode="HTML")
 
 
-# ─── /today ──────────────────────────────────────────────
-
-
+@require_approval
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show tasks due today."""
+    user_id = context.user_data['user_id']
     async with session_factory() as session:
-        await update_overdue_tasks(session)
-        tasks = await get_today_tasks(session)
-        overdue = await get_overdue_tasks(session)
+        await update_overdue_tasks(session, user_id)
+        tasks = await get_today_tasks(session, user_id)
+        overdue = await get_overdue_tasks(session, user_id)
         await session.commit()
 
     now = datetime.now()
@@ -142,13 +262,12 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
-# ─── /week ───────────────────────────────────────────────
-
-
+@require_approval
 async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show tasks due in the next 7 days."""
+    user_id = context.user_data['user_id']
     async with session_factory() as session:
-        tasks = await get_tasks_due_soon(session, days_ahead=7)
+        tasks = await get_tasks_due_soon(session, user_id, days_ahead=7)
 
     if not tasks:
         await update.message.reply_text("✅ Không có công việc nào trong 7 ngày tới!")
@@ -180,14 +299,13 @@ async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
-# ─── /overdue ────────────────────────────────────────────
-
-
+@require_approval
 async def overdue_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show all overdue tasks."""
+    user_id = context.user_data['user_id']
     async with session_factory() as session:
-        await update_overdue_tasks(session)
-        tasks = await get_overdue_tasks(session)
+        await update_overdue_tasks(session, user_id)
+        tasks = await get_overdue_tasks(session, user_id)
         await session.commit()
 
     if not tasks:
@@ -206,14 +324,13 @@ async def overdue_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
-# ─── /thongke ────────────────────────────────────────────
-
-
+@require_approval
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show overall statistics."""
+    user_id = context.user_data['user_id']
     async with session_factory() as session:
-        await update_overdue_tasks(session)
-        stats = await get_task_statistics(session)
+        await update_overdue_tasks(session, user_id)
+        stats = await get_task_statistics(session, user_id)
         await session.commit()
 
     # Progress bar
@@ -247,9 +364,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
-# ─── /hocsinh <name> ─────────────────────────────────────
-
-
+@require_approval
 async def student_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Search and show student info."""
     if not context.args:
@@ -259,9 +374,10 @@ async def student_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     query = " ".join(context.args)
+    user_id = context.user_data['user_id']
 
     async with session_factory() as session:
-        students = await search_students(session, query)
+        students = await search_students(session, user_id, query)
 
         if not students:
             await update.message.reply_text(f"❌ Không tìm thấy học sinh: {query}")
@@ -270,7 +386,7 @@ async def student_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = [f"👩‍🎓 <b>Kết quả tìm kiếm: \"{query}\"</b>\n"]
 
         for student in students[:10]:
-            tasks = await get_tasks_for_student(session, student.id)
+            tasks = await get_tasks_for_student(session, user_id, student.id)
             pending = [t for t in tasks if t.status == TaskStatus.PENDING]
             done = [t for t in tasks if t.status == TaskStatus.DONE]
             overdue = [t for t in tasks if t.status == TaskStatus.OVERDUE]
@@ -301,9 +417,7 @@ async def student_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
-# ─── /lop <class_name> ───────────────────────────────────
-
-
+@require_approval
 async def class_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show class statistics."""
     if not context.args:
@@ -313,9 +427,10 @@ async def class_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     class_name = " ".join(context.args)
+    user_id = context.user_data['user_id']
 
     async with session_factory() as session:
-        stats = await get_class_statistics(session, class_name)
+        stats = await get_class_statistics(session, user_id, class_name)
 
     if stats["student_count"] == 0:
         await update.message.reply_text(f"❌ Không tìm thấy lớp: {class_name}")
@@ -333,9 +448,7 @@ async def class_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
-# ─── /hoanthanh <id> ─────────────────────────────────────
-
-
+@require_approval
 async def complete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mark a task as complete."""
     if not context.args:
@@ -350,8 +463,9 @@ async def complete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ ID phải là số. Ví dụ: /hoanthanh 5")
         return
 
+    user_id = context.user_data['user_id']
     async with session_factory() as session:
-        task = await mark_task_done(session, task_id)
+        task = await mark_task_done(session, user_id, task_id)
         await session.commit()
 
     if task:
@@ -360,18 +474,23 @@ async def complete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
         )
     else:
-        await update.message.reply_text(f"❌ Không tìm thấy công việc #{task_id}")
+        await update.message.reply_text(f"❌ Không tìm thấy công việc #{task_id} của bạn.")
 
 
-# ─── /sync ───────────────────────────────────────────────
-
-
+@require_approval
 async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Manually trigger Google Drive sync."""
-    await update.message.reply_text("🔄 Đang đồng bộ từ Google Drive...")
+    user_id = context.user_data['user_id']
+    folder_id = context.user_data.get('gdrive_folder_id')
+    
+    if not folder_id:
+        await update.message.reply_text("❌ Bạn chưa thiết lập Google Drive Folder ID. Hãy dùng lệnh /set_drive <id> trước.")
+        return
+        
+    await update.message.reply_text("🔄 Đang đồng bộ từ Google Drive của bạn...")
 
     try:
-        results = await scheduler_service.trigger_sync()
+        results = await scheduler_service.trigger_sync(user_id, folder_id)
 
         if results.get("errors"):
             error_text = "\n".join(f"  ⚠️ {e}" for e in results["errors"])
@@ -392,16 +511,15 @@ async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Lỗi đồng bộ: {e}")
 
 
-# ─── /baocao ─────────────────────────────────────────────
-
-
+@require_approval
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Generate detailed report."""
+    user_id = context.user_data['user_id']
     async with session_factory() as session:
-        await update_overdue_tasks(session)
-        stats = await get_task_statistics(session)
-        overdue = await get_overdue_tasks(session)
-        due_soon = await get_tasks_due_soon(session, days_ahead=7)
+        await update_overdue_tasks(session, user_id)
+        stats = await get_task_statistics(session, user_id)
+        overdue = await get_overdue_tasks(session, user_id)
+        due_soon = await get_tasks_due_soon(session, user_id, days_ahead=7)
         await session.commit()
 
     now = datetime.now()

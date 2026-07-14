@@ -1,0 +1,18 @@
+# fly.toml app configuration file generated for bot-faithful-moon-4084 on 2026-07-14T14:49:35+07:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'bot-faithful-moon-4084'
+primary_region = 'sin'
+
+[build]
+
+[mounts]
+  source = "bot_data"
+  destination = "/app/data"
+
+[[vm]]
+  memory = '1gb'
+  cpus = 1
+  memory_mb = 1024

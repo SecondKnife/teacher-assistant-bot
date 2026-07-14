@@ -55,6 +55,7 @@ class Student(Base):
     __tablename__ = "students"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("user_settings.id"), nullable=False, index=True)
     name = Column(String(200), nullable=False, index=True)
     class_name = Column(String(50), nullable=False, index=True)
     subject = Column(String(100), nullable=True)
@@ -63,14 +64,15 @@ class Student(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
+    user = relationship("UserSetting", back_populates="students")
     tasks = relationship("Task", back_populates="student", cascade="all, delete-orphan")
 
     __table_args__ = (
-        UniqueConstraint("name", "class_name", name="uq_student_name_class"),
+        UniqueConstraint("user_id", "name", "class_name", name="uq_user_student_name_class"),
     )
 
     def __repr__(self):
-        return f"<Student(id={self.id}, name='{self.name}', class='{self.class_name}')>"
+        return f"<Student(id={self.id}, user_id={self.user_id}, name='{self.name}', class='{self.class_name}')>"
 
 
 class Task(Base):
@@ -82,6 +84,7 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("user_settings.id"), nullable=False, index=True)
     title = Column(String(500), nullable=False)
     description = Column(Text, nullable=True)
     category = Column(
@@ -106,10 +109,11 @@ class Task(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
+    user = relationship("UserSetting", back_populates="tasks")
     student = relationship("Student", back_populates="tasks")
 
     def __repr__(self):
-        return f"<Task(id={self.id}, title='{self.title[:30]}...', status='{self.status}')>"
+        return f"<Task(id={self.id}, user_id={self.user_id}, title='{self.title[:30]}...', status='{self.status}')>"
 
 
 class UserSetting(Base):
@@ -120,6 +124,12 @@ class UserSetting(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     chat_id = Column(String(100), unique=True, nullable=False, index=True)
     username = Column(String(200), nullable=True)
+    
+    # Multi-tenant Auth & Config
+    is_approved = Column(Integer, default=0)
+    is_admin = Column(Integer, default=0)
+    gdrive_folder_id = Column(String(200), nullable=True)
+    
     reminder_time = Column(String(10), default="07:00")
     remind_before_days = Column(Integer, default=3)
     sync_interval_minutes = Column(Integer, default=30)
@@ -127,8 +137,13 @@ class UserSetting(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Relationships
+    students = relationship("Student", back_populates="user", cascade="all, delete-orphan")
+    tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")
+    sync_logs = relationship("SyncLog", back_populates="user", cascade="all, delete-orphan")
+
     def __repr__(self):
-        return f"<UserSetting(chat_id='{self.chat_id}', reminder='{self.reminder_time}')>"
+        return f"<UserSetting(chat_id='{self.chat_id}', approved={self.is_approved})>"
 
 
 class SyncLog(Base):
@@ -137,6 +152,7 @@ class SyncLog(Base):
     __tablename__ = "sync_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("user_settings.id"), nullable=False, index=True)
     file_name = Column(String(500), nullable=False)
     file_id = Column(String(200), nullable=True)
     modified_time = Column(String(50), nullable=True)
@@ -146,8 +162,11 @@ class SyncLog(Base):
     error_message = Column(Text, nullable=True)
     synced_at = Column(DateTime, default=datetime.utcnow)
 
+    # Relationships
+    user = relationship("UserSetting", back_populates="sync_logs")
+
     def __repr__(self):
-        return f"<SyncLog(file='{self.file_name}', status='{self.status}')>"
+        return f"<SyncLog(id={self.id}, user_id={self.user_id}, status='{self.status}')>"
 
 
 # ─── Engine & Session Factory ─────────────────────────────

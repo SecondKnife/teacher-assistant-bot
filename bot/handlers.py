@@ -96,20 +96,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with session_factory() as session:
         user = await get_or_create_user_setting(session, chat_id, username)
         
-        # Auto-approve if they are the admin defined in config
-        if str(config.telegram.admin_telegram_id) == chat_id and not user.is_admin:
-            user.is_admin = 1
+        # Auto-approve everyone who uses the bot
+        if not user.is_approved:
             user.is_approved = 1
             
+        # Auto-assign Admin if they are the admin defined in config
+        if str(config.telegram.admin_telegram_id) == chat_id and not user.is_admin:
+            user.is_admin = 1
+            
         await session.commit()
-
-    if not user.is_approved:
-        await update.message.reply_text(
-            "👋 <b>Chào mừng đến với Teacher Assistant Bot!</b>\n\n"
-            "Tài khoản của bạn đã được ghi nhận. Vui lòng chờ Admin phê duyệt để sử dụng các tính năng.",
-            parse_mode="HTML"
-        )
-        return
 
     welcome = (
         "🎓 <b>Chào mừng đến với Teacher Assistant Bot!</b>\n\n"

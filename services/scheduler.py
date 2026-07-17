@@ -76,6 +76,7 @@ class SchedulerService:
             id="daily_reminder",
             name="Nhắc nhở hàng ngày",
             replace_existing=True,
+            misfire_grace_time=3600,
         )
 
         # 1b. Evening reminder
@@ -86,6 +87,7 @@ class SchedulerService:
             id="evening_reminder",
             name="Tổng hợp buổi tối",
             replace_existing=True,
+            misfire_grace_time=3600,
         )
 
         # 2. Google Drive sync
@@ -97,15 +99,17 @@ class SchedulerService:
             id="gdrive_sync",
             name="Đồng bộ Google Drive",
             replace_existing=True,
+            misfire_grace_time=3600,
         )
 
         # 3. Overdue task checker (every hour)
         self.scheduler.add_job(
             self._check_overdue_job,
             trigger=IntervalTrigger(hours=1),
-            id="overdue_check",
-            name="Kiểm tra quá hạn",
+            id="overdue_checker",
+            name="Kiểm tra việc quá hạn",
             replace_existing=True,
+            misfire_grace_time=3600,
         )
 
         self.scheduler.start()
